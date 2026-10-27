@@ -110,4 +110,21 @@ SashimiPro is an independent reimplementation inspired by [ggsashimi](https://gi
 
 ## License
 
-[MIT](LICENSE)
+SashimiPro is released under the MIT License. Copyright (c) 2026 Neng Huang.
+
+## Example: IRF5
+
+IRF5 (chr7:128,937,032-128,950,038) in 205 HPRC samples.
+
+**Population level**: samples grouped by superpopulation and overlaid within each group, with two introns of interest highlighted.
+
+![IRF5 sashimi plot grouped by population](docs/images/IRF5_hprc_population.png)
+
+**Sample level**: the same region with one track per sample.
+
+<details>
+<summary>Show all 205 samples (very long image)</summary>
+
+![IRF5 sashimi plot, one track per sample](docs/images/IRF5_hprc_sample.png)
+
+</details>
