@@ -80,6 +80,8 @@ sashimi plot -b samples.tsv -g genes.gtf -c IRF5 --params sashimi.settings.json 
 sashimi plot -b samples.tsv -c chr7:128938246-128942070 --highlight "chr7:128,940,876-128,941,278" -o fig.svg
 ```
 
+With many samples, add `--tracks-per-file 25` to split the figure into several readable files (`fig_part01.png`, …) that share the same scales.
+
 `-O/-C/-L` take a column name or a ggsashimi-style 1-based column index. For stranded libraries (`-s` other than `NONE`) without `-S`, separate `_plus` and `_minus` files are written, as in ggsashimi. Run `sashimi plot -h` for all options.
 
 ## Library strandedness

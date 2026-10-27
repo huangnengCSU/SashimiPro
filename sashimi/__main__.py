@@ -65,6 +65,8 @@ def main(argv=None):
     p.add_argument("--width", type=int, help="Figure width in px")
     p.add_argument("--base-size", type=float, help="Font size")
     p.add_argument("--highlight", help="Introns to highlight, e.g. 'chr7:128,940,001-128,940,500; 128941001-128941200'")
+    p.add_argument("--tracks-per-file", type=int, default=0,
+                   help="Split into several files (out_part01, ...) with at most this many tracks each [all in one]")
     p.add_argument("--scale", type=float, default=2, help="Raster scale factor for png [%(default)s]")
     p.add_argument("-j", "--junctions-tsv", help="Also write all junction counts to this TSV")
 
@@ -86,7 +88,7 @@ def main(argv=None):
 
     # ---- static plot ----
     from .annotation import Annotation
-    from .plot import build_figure
+    from .plot import render_files
 
     if not args.bam or not region:
         ap.error("plot needs -b/--bam and -c/--coordinates (or --params with a region)")
@@ -153,9 +155,15 @@ def main(argv=None):
         outs = [("+", f"{root}_plus.{fmt}"), ("-", f"{root}_minus.{fmt}")]
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     for strand, path in outs:
-        fig = build_figure(data, dict(params, strand=strand), transcripts, interactive=False)
-        fig.write_image(path, scale=args.scale if fmt in ("png", "jpeg") else 1)
-        print(f"Wrote {path}  ({format_region(chrom, start, end)})")
+        files, notes = render_files(data, dict(params, strand=strand), transcripts, fmt, args.scale,
+                                    args.tracks_per_file)
+        base, ext = os.path.splitext(path)
+        for suffix, img in files:
+            with open(f"{base}{suffix}{ext}", "wb") as fh:
+                fh.write(img)
+            print(f"Wrote {base}{suffix}{ext}  ({format_region(chrom, start, end)})")
+        for note in notes:
+            print("WARN:", note, file=sys.stderr)
     if args.junctions_tsv:
         junction_table(data).to_csv(args.junctions_tsv, sep="\t", index=False)
         print(f"Wrote {args.junctions_tsv}")

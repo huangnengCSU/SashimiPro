@@ -5,6 +5,8 @@ every other control re-renders the figure from the in-memory data.
 """
 
 import base64
+import io
+import zipfile
 import json
 import os
 import re
@@ -15,7 +17,7 @@ from dash import Dash, Input, Output, State, ctx, dcc, html, no_update
 from . import __version__
 from .annotation import Annotation, annotated_introns
 from .data import LIBTYPES, ReadFilter, format_region, junction_table, load_region, parse_region, read_samples
-from .plot import DEFAULTS, PALETTES, build_figure, format_introns, merged_params, parse_introns
+from .plot import DEFAULTS, PALETTES, build_figure, render_files, format_introns, merged_params, parse_introns
 
 # Server-side state (the app is meant to be run locally by one user).
 STATE = {"region": None, "transcripts": None, "annotation": None, "ann_path": None, "cmap": None}
@@ -249,6 +251,9 @@ def make_layout(init):
                           dcc.Input(id="ex-scale", type="number", value=2, min=1, max=6, step=1)]),
             ]),
             html.Div("× only affects PNG: 2 = twice the pixels in each direction (sharper).", className="hint"),
+            row("Tracks per file (0 = all in one file)",
+                dcc.Input(id="ex-per-file", type="number", value=25, min=0, step=5),
+                hint="With more tracks than this, Figure downloads a ZIP of several readable images."),
             html.Div(className="inline", style={"marginTop": "6px"}, children=[
                 html.Button("Figure", id="btn-export"),
                 html.Button("Junctions", id="btn-junc", title="All junction counts per sample (TSV)"),
@@ -265,6 +270,10 @@ def make_layout(init):
         html.Div(id="load-banner", className="load-banner", style={"display": "none"}, children=[
             html.Div(className="load-bar"),
             html.Div("Loading BAMs… (the first load of a large GTF can take a minute)", className="load-text"),
+        ]),
+        html.Div(id="render-banner", className="load-banner", style={"display": "none"}, children=[
+            html.Div(className="load-bar"),
+            html.Div("Redrawing… (many separate tracks can take several seconds)", className="load-text"),
         ]),
         dcc.Loading(dcc.Graph(id="graph", figure=placeholder_figure("Loading…" if init.get("region") else
                                                                     "Enter samples and a region, then press Load"),
@@ -390,6 +399,7 @@ def create_app(init=None):
     @app.callback(
         Output("graph", "figure"),
         Input("loaded", "data"), *[Input(cid, "value") for _, cid, _ in PARAM_CONTROLS],
+        running=[(Output("render-banner", "style"), {"display": "block"}, {"display": "none"})],
     )
     def render(loaded, *values):
         region = STATE["region"]
@@ -404,11 +414,11 @@ def create_app(init=None):
     @app.callback(
         Output("dl", "data"), Output("export-status", "children"),
         Input("btn-export", "n_clicks"), Input("btn-junc", "n_clicks"), Input("btn-settings", "n_clicks"),
-        State("ex-name", "value"), State("ex-format", "value"), State("ex-scale", "value"),
+        State("ex-name", "value"), State("ex-format", "value"), State("ex-scale", "value"), State("ex-per-file", "value"),
         *[State(cid, "value") for _, cid, _ in PARAM_CONTROLS],
         prevent_initial_call=True,
     )
-    def export(_f, _j, _s, name, fmt, scale, *values):
+    def export(_f, _j, _s, name, fmt, scale, per_file, *values):
         name = (name or "sashimi").strip()
         p = collect_params(values)
         region = STATE["region"]
@@ -426,11 +436,16 @@ def create_app(init=None):
                     df["annotated"] = [(a, b) in known for a, b in zip(df["intron_start"], df["intron_end"])]
                 return dcc.send_data_frame(df.to_csv, f"{name}.junctions.tsv", sep="\t", index=False), \
                     f"{len(df)} junction rows exported."
-            if not p["width"]:
-                p["width"] = 1000
-            fig = build_figure(region, p, STATE["transcripts"], interactive=False)
-            img = fig.to_image(format=fmt, scale=float(scale or 1) if fmt == "png" else 1)
-            return dcc.send_bytes(img, f"{name}.{fmt}"), f"Saved {name}.{fmt}"
+            files, notes = render_files(region, p, STATE["transcripts"], fmt, scale, per_file)
+            note = ("\n⚠ " + "\n⚠ ".join(notes)) if notes else ""
+            if len(files) == 1:
+                return dcc.send_bytes(files[0][1], f"{name}.{fmt}"), f"Saved {name}.{fmt}" + note
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for suffix, data in files:
+                    zf.writestr(f"{name}{suffix}.{fmt}", data)
+            return dcc.send_bytes(buf.getvalue(), f"{name}.{fmt}.zip"), \
+                f"Saved {len(files)} files in {name}.{fmt}.zip" + note
         except Exception as e:
             traceback.print_exc()
             return no_update, f"Export failed: {e}"

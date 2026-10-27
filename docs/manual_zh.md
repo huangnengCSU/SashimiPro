@@ -179,7 +179,8 @@ kd_1	bams/kd_1.bam	kd	1
 |---|---|
 | **File name** | 下载文件的名字（不含扩展名）。 |
 | **格式下拉框** | `pdf` / `svg`（矢量图，可在 Illustrator/Inkscape 里编辑，投稿推荐）/ `png`。 |
-| **PNG resolution ×** | PNG 的分辨率倍数。图的大小按 Width × 总高度（像素）算，× 2 就是长宽各乘 2（如 1000 像素宽变成 2000 像素），图更清晰、文件更大；排版尺寸不变。只对 PNG 有效，PDF/SVG 是矢量图，忽略此项。默认 2，范围 1–6。 |
+| **PNG resolution ×** | PNG 的分辨率倍数。图的大小按 Width × 总高度（像素）算，× 2 就是长宽各乘 2（如 1000 像素宽变成 2000 像素），图更清晰、文件更大；排版尺寸不变。只对 PNG 有效，PDF/SVG 是矢量图，忽略此项。默认 2，范围 1–6。PNG 每边最多约 60,000 像素，超过时会自动降低倍数并提示（否则文件会损坏）。 |
+| **Tracks per file** | 每个文件最多放几个轨道，默认 25。轨道数超过它时，Figure 会下载一个 ZIP，里面是 `名字_part01`、`_part02`… 多个文件（例如 205 个样本 → 9 张图）。各文件的 x 范围、弧线粗细标准和（勾选 same y scale 时的）y 轴完全一致，可以直接对比。0 = 全部放在一个文件里。 |
 | **Figure** | 按当前参数导出整张图（整个加载的区域，不是当前缩放的视野）。 |
 | **Junctions** | 导出当前区域所有样本、所有 junction 的原始 reads 数（TSV：染色体、内含子起止、样本、reads 数、链；有 GTF 时还有 annotated 列）。不受 Minimum reads 等显示参数影响，适合做后续统计。 |
 | **Settings** | 把当前所有画图参数保存为 JSON 文件。 |
@@ -228,3 +229,5 @@ sashimi plot -b samples.tsv -g genes.gtf --params sashimi.settings.json -o fig.p
 **修改 Palette 没反应？** 需要先设置 Color by column。
 
 **基因名找不到？** 需要填写 GTF；名字不区分大小写，也可以用 Ensembl gene id。
+
+**样本很多（上百个）时导出的 PNG 看不清 / 打不开？** 一张图里放几百个轨道会非常高（205 个轨道约 24,000 像素），看图软件会把整张图缩到窗口大小，所以看起来模糊；倍数太大还会超过浏览器的像素上限导致文件损坏。用 **Tracks per file** 分成多个文件（默认 25 个轨道一张），或者先分组 / 只选部分样本。命令行用 `--tracks-per-file 25`。

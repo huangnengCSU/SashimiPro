@@ -179,7 +179,8 @@ Hovering an exon shows the transcript name, gene, transcript id, biotype and str
 |---|---|
 | **File name** | Name of the downloaded file, without extension. |
 | **Format dropdown** | `pdf` / `svg` (vector, editable in Illustrator/Inkscape; recommended for papers) / `png`. |
-| **PNG resolution ×** | PNG pixel multiplier. The figure is Width × total height in pixels; × 2 doubles both (e.g. 1000 px wide becomes 2000 px), so it is sharper and larger but the layout is unchanged. PNG only; PDF/SVG are vector and ignore it. Default 2, range 1–6. |
+| **PNG resolution ×** | PNG pixel multiplier. The figure is Width × total height in pixels; × 2 doubles both (e.g. 1000 px wide becomes 2000 px), so it is sharper and larger but the layout is unchanged. PNG only; PDF/SVG are vector and ignore it. Default 2, range 1–6. PNGs are limited to about 60,000 px per side; beyond that the multiplier is lowered automatically with a notice (otherwise the file would be corrupt). |
+| **Tracks per file** | Maximum tracks per file, default 25. With more tracks, Figure downloads a ZIP of `name_part01`, `_part02`, … (e.g. 205 samples → 9 images). All files share the same x range, arc-width scale and (with same y scale) y axis, so they can be compared directly. 0 = everything in one file. |
 | **Figure** | Export the whole figure with the current parameters (the full loaded region, not the current zoom). |
 | **Junctions** | Export raw read counts of every junction in every sample (TSV: chromosome, intron start/end, sample, count, strand; plus an `annotated` column with a GTF). Ignores display filters such as Minimum reads, so it is suitable for statistics. |
 | **Settings** | Save all plot parameters to a JSON file. |
@@ -228,3 +229,5 @@ sashimi plot -b samples.tsv -g genes.gtf --params sashimi.settings.json -o fig.p
 **Changing the Palette does nothing.** Set Color by column first.
 
 **Gene name not found.** A GTF is required; names are case-insensitive, and Ensembl gene ids work too.
+
+**With hundreds of samples, the exported PNG is unreadable or won't open.** Hundreds of tracks make a very tall image (205 tracks ≈ 24,000 px), which image viewers shrink to fit the window, so it looks blurry; a large multiplier can also exceed the browser's pixel limit and corrupt the file. Use **Tracks per file** to split the export (25 tracks per image by default), or group / select fewer samples. On the command line: `--tracks-per-file 25`.

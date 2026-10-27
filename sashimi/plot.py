@@ -68,6 +68,7 @@ DEFAULTS = dict(
 )
 
 MAX_POINTS = 4000               # per coverage curve
+POINT_BUDGET = 250_000          # all curves together; keeps figures with many samples fast
 
 
 def merged_params(params):
@@ -289,17 +290,17 @@ def build_tracks(region, p, known_introns=None):
 # Drawing helpers
 # --------------------------------------------------------------------------
 
-def _curve_xy(y, start, cmap):
+def _curve_xy(y, start, cmap, max_points=MAX_POINTS):
     """Step-curve points of a per-base signal, run-length or max-binned."""
     n = len(y)
     edges = cmap.fwd(np.arange(start, start + n + 1) - 0.5)
     change = np.flatnonzero(np.diff(y)) + 1
-    if len(change) < MAX_POINTS:
+    if len(change) < max_points:
         idx = np.concatenate([[0], change])
         xs, ys = edges[idx], y[idx]
     else:
         centers = (edges[:-1] + edges[1:]) / 2
-        bins = np.linspace(edges[0], edges[-1], MAX_POINTS + 1)[:-1]
+        bins = np.linspace(edges[0], edges[-1], max_points + 1)[:-1]
         idx = np.unique(np.clip(np.searchsorted(centers, bins), 0, n - 1))
         xs, ys = edges[idx], np.maximum.reduceat(y, idx)
     xs = np.append(xs, edges[-1])
@@ -366,7 +367,14 @@ def _annotation_rows(transcripts, p):
     return rows
 
 
+def _axis(prefix, row):
+    """Axis id of a subplot row in a one-column figure: x, x2, x3..."""
+    return prefix if row == 1 else f"{prefix}{row}"
+
+
 def _draw_annotation(fig, row, rows, region, cmap, p):
+    """Draw the transcript track; returns its text labels (added to the layout in one go by the caller)."""
+    labels = []
     start, end = region.start, region.end
     lines_x, lines_y, arr = [], [], {"+": ([], []), "-": ([], [])}
     view = cmap.fwd(end + 0.5) - cmap.fwd(start - 0.5)
@@ -414,19 +422,34 @@ def _draw_annotation(fig, row, rows, region, cmap, p):
                                  hoverinfo="text", text=info, name=t["name"], showlegend=False),
                       row=row, col=1)
         lx = float(cmap.fwd(max(t["start"], start) - 0.5))
-        fig.add_annotation(x=lx, y=y + 0.24, text=t["name"], showarrow=False, xanchor="left", yanchor="bottom",
-                           font=dict(size=p["font_size"] * 0.8, color=ANN_COLOR), row=row, col=1)
+        labels.append(dict(x=lx, y=y + 0.24, text=t["name"], showarrow=False, xanchor="left", yanchor="bottom",
+                           xref=_axis("x", row), yref=_axis("y", row),
+                           font=dict(size=p["font_size"] * 0.8, color=ANN_COLOR)))
     fig.update_yaxes(range=[-len(rows) + 0.6, 0.85], visible=False, row=row, col=1)
+    return labels
 
 
 # --------------------------------------------------------------------------
 # Main entry
 # --------------------------------------------------------------------------
 
-def build_figure(region, params=None, transcripts=None, interactive=True, return_cmap=False):
+def count_tracks(region, params=None):
+    return len(build_tracks(region, merged_params(params)))
+
+
+def _track_range(t, region, cmap, p, vmax):
+    """(coverage max, top, bottom) of a track's y axis, including its arcs."""
+    arcs = _arcs(t, region, cmap, p, vmax)
+    ymax = float(t["disp"].max()) if len(t["disp"]) else 0.0
+    return ymax, max([ymax] + [a["peak"] for a in arcs]) or 1.0, min([0.0] + [a["peak"] for a in arcs])
+
+
+def build_figure(region, params=None, transcripts=None, interactive=True, return_cmap=False, pages=None):
     """region: data.RegionData; transcripts: Annotation.region(...) output or None.
 
-    With return_cmap, also returns the CoordMap (display <-> real coordinates)."""
+    With return_cmap, also returns the CoordMap (display <-> real coordinates).
+    pages=(page, tracks_per_page) draws only that page's tracks (0-based page) while keeping
+    x range, arc widths and the shared y scale identical across pages."""
     p = merged_params(params)
     known = annotated_introns(transcripts) if transcripts else None
     tracks = build_tracks(region, p, known)
@@ -443,6 +466,20 @@ def build_figure(region, params=None, transcripts=None, interactive=True, return
         intervals = intersect_introns({k for t in tracks for k in t["junctions"]})
     cmap = CoordMap(start, end, intervals, float(p["shrink_power"]))
 
+    # computed over all tracks so that paged exports stay comparable
+    vmax = max((j["value"] for t in tracks for j in t["junctions"].values()), default=1.0)
+    any_hl = any(j["highlight"] for t in tracks for j in t["junctions"].values())
+    shared_range = None
+    if p["fix_y"]:
+        rs = [_track_range(t, region, cmap, p, vmax) for t in tracks]
+        shared_range = (max(x[0] for x in rs), max(x[1] for x in rs), min(x[2] for x in rs))
+    page_note = ""
+    if pages:
+        page, per = pages
+        total = len(tracks)
+        tracks = tracks[page * per:(page + 1) * per]
+        page_note = f" · tracks {page * per + 1}-{page * per + len(tracks)} of {total}"
+
     ann_rows = _annotation_rows(transcripts, p) if transcripts and p["ann_mode"] != "none" else []
     n = len(tracks)
     ann_h = (len(ann_rows) * (p["font_size"] * 2 + 10) + 16) if ann_rows else 0
@@ -453,17 +490,18 @@ def build_figure(region, params=None, transcripts=None, interactive=True, return
     fig = make_subplots(rows=len(heights), cols=1, shared_xaxes=True, row_heights=heights,
                         vertical_spacing=gap / plot_h if len(heights) > 1 else 0)
 
-    vmax = max((j["value"] for t in tracks for j in t["junctions"].values()), default=1.0)
-    any_hl = any(j["highlight"] for t in tracks for j in t["junctions"].values())
+    n_curves = sum(len(t["curves"]) for t in tracks)
+    max_points = int(min(MAX_POINTS, max(800, POINT_BUDGET // max(n_curves, 1))))
     hcolor = p["highlight_color"] or DEFAULTS["highlight_color"]
     dim = 0.3 if any_hl and p["dim_others"] else 1.0
     halo = "1px 1px 1px #fff, -1px -1px 1px #fff, 1px -1px 1px #fff, -1px 1px 1px #fff"
     font = dict(size=p["font_size"])
     track_ranges = []
+    labels = []
     for r, t in enumerate(tracks, start=1):
         overlaid = len(t["curves"]) > 1
         for name, y, color in t["curves"]:
-            xs, ys, real = _curve_xy(y, start, cmap)
+            xs, ys, real = _curve_xy(y, start, cmap, max_points)
             fig.add_trace(go.Scatter(
                 x=xs, y=ys, mode="lines", line=dict(width=0, shape="hv", color=color),
                 fill="tozeroy", fillcolor=color, opacity=p["alpha"], name=name, customdata=real,
@@ -479,20 +517,29 @@ def build_figure(region, params=None, transcripts=None, interactive=True, return
             dash = "dot" if p["novel_dashed"] and known is not None and not a["j"]["annotated"] else "solid"
             buckets.setdefault((a["j"]["highlight"], a["width"], dash), []).append(a)
         for (hl, w, dash), items in sorted(buckets.items()):    # highlighted arcs drawn last (on top)
-            xs, ys, cd = [], [], []
+            xs, ys = [], []
             for a in items:
+                xs += list(a["xs"]) + [None]
+                ys += list(a["ys"]) + [None]
+            fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", hoverinfo="skip",
+                                     line=dict(color=hcolor if hl else t["color"], width=w + 2 if hl else w, dash=dash),
+                                     opacity=1.0 if hl else dim, showlegend=False), row=r, col=1)
+        if arcs:
+            hx, hy, cd = [], [], []
+            for a in arcs:
                 (ja, jb), j = a["key"], a["j"]
                 tag = "" if known is None else ("annotated" if j["annotated"] else "<b>novel</b>")
                 info = (f"<b>{t['label']}</b><br>intron {region.chrom}:{ja:,}-{jb:,} ({jb - ja + 1:,} bp)"
                         f"<br>reads: {j['text']}" + (f"<br>{tag}" if tag else "")
-                        + ("<br>★ highlighted" if hl else "") + "<br><i>click to toggle highlight</i>")
-                xs += list(a["xs"]) + [None]
-                ys += list(a["ys"]) + [None]
-                cd += [[info, f"{ja}-{jb}"]] * len(a["xs"]) + [None]
-            fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", customdata=cd,
-                                     line=dict(color=hcolor if hl else t["color"], width=w + 2 if hl else w, dash=dash),
-                                     opacity=1.0 if hl else dim, hovertemplate="%{customdata[0]}<extra></extra>",
-                                     showlegend=False), row=r, col=1)
+                        + ("<br>★ highlighted" if j["highlight"] else "") + "<br><i>click to toggle highlight</i>")
+                k = len(a["xs"])
+                for i in (k // 5, k * 2 // 5, k // 2, k * 3 // 5, k * 4 // 5):
+                    hx.append(a["xs"][i])
+                    hy.append(a["ys"][i])
+                    cd.append([info, f"{ja}-{jb}"])
+            fig.add_trace(go.Scatter(x=hx, y=hy, mode="markers", customdata=cd,
+                                     marker=dict(size=10, color="rgba(0,0,0,0)"),
+                                     hovertemplate="%{customdata[0]}<extra></extra>", showlegend=False), row=r, col=1)
         if p["show_labels"] and arcs:
             for hl in (False, True):
                 sel = [a for a in arcs if a["j"]["highlight"] == hl]
@@ -509,16 +556,13 @@ def build_figure(region, params=None, transcripts=None, interactive=True, return
         top = max([ymax] + [a["peak"] for a in arcs]) or 1.0
         bottom = min([0.0] + [a["peak"] for a in arcs])
         track_ranges.append((ymax, top, bottom))
-        fig.add_annotation(text=f"<b>{t['label']}</b>", x=0.005, y=0.98, xref="x domain", yref="y domain",
-                           xanchor="left", yanchor="top", showarrow=False,
-                           font=dict(size=p["font_size"], color=t["color"] if p["color_by"] else "#222"),
-                           row=r, col=1)
+        labels.append(dict(text=f"<b>{t['label']}</b>", x=0.005, y=0.98, xref=_axis("x", r) + " domain",
+                           yref=_axis("y", r) + " domain", xanchor="left", yanchor="top", showarrow=False,
+                           font=dict(size=p["font_size"], color=t["color"] if p["color_by"] else "#222")))
 
     for r, (ymax, top, bottom) in enumerate(track_ranges, start=1):
-        if p["fix_y"]:
-            ymax = max(x[0] for x in track_ranges)
-            top = max(x[1] for x in track_ranges)
-            bottom = min(x[2] for x in track_ranges)
+        if shared_range:
+            ymax, top, bottom = shared_range
         pad = (top - bottom) * 0.08
         ticks = nice_ticks(ymax)
         fig.update_yaxes(range=[bottom - (pad if bottom < 0 else 0), top + pad], tickvals=ticks,
@@ -527,14 +571,15 @@ def build_figure(region, params=None, transcripts=None, interactive=True, return
                          ticks="outside", tickfont=font, fixedrange=False, row=r, col=1)
 
     if ann_rows:
-        _draw_annotation(fig, n + 1, ann_rows, region, cmap, p)
+        labels += _draw_annotation(fig, n + 1, ann_rows, region, cmap, p)
+    fig.layout.annotations = labels
 
     if p["highlight_band"]:
-        for a, b in parse_introns(p["highlight"]):
-            a, b = max(a, start), min(b, end)
-            if a <= b:
-                fig.add_vrect(x0=float(cmap.fwd(a - 0.5)), x1=float(cmap.fwd(b + 0.5)), row="all", col=1,
-                              fillcolor=hcolor, opacity=0.08, layer="below", line_width=0)
+        # one rectangle spanning the whole figure height (all rows share the x axis)
+        fig.layout.shapes = [dict(type="rect", xref="x", yref="paper", x0=float(cmap.fwd(max(a, start) - 0.5)),
+                                  x1=float(cmap.fwd(min(b, end) + 0.5)), y0=0, y1=1, fillcolor=hcolor,
+                                  opacity=0.08, layer="below", line_width=0)
+                             for a, b in parse_introns(p["highlight"]) if max(a, start) <= min(b, end)]
 
     x0, x1 = float(cmap.fwd(start - 0.5)), float(cmap.fwd(end + 0.5))
     xaxis = dict(range=[x0, x1], showgrid=False, ticks="outside", tickfont=font, tickformat=",d")
@@ -552,7 +597,7 @@ def build_figure(region, params=None, transcripts=None, interactive=True, return
     if region.libtype == "NONE":
         strand_txt = ""
     title = f"{region.chrom}:{start:,}-{end:,}" + (f" · {strand_txt}" if strand_txt else "") \
-        + (" · CPM" if normalized else "") + (" · introns shrunk" if not cmap.identity else "")
+        + (" · CPM" if normalized else "") + (" · introns shrunk" if not cmap.identity else "") + page_note
     fig.update_layout(
         height=plot_h + margin["t"] + margin["b"],
         width=None if interactive and not p["width"] else p["width"],
@@ -562,3 +607,38 @@ def build_figure(region, params=None, transcripts=None, interactive=True, return
         plot_bgcolor="white", paper_bgcolor="white",
     )
     return (fig, cmap) if return_cmap else fig
+
+
+# --------------------------------------------------------------------------
+# File export
+# --------------------------------------------------------------------------
+
+MAX_PNG_SIDE = 60_000           # Chromium (used by kaleido) cannot rasterise beyond ~65k px per side
+MAX_PNG_AREA = 250_000_000      # ... or ~268M px in total; larger PNGs come out corrupt
+
+
+def render_files(region, params, transcripts, fmt="pdf", scale=2.0, tracks_per_file=0):
+    """Render the figure to image bytes, split into several files when there are many tracks.
+
+    Returns (files, notes): files = [(suffix, bytes)] with suffix '' for a single file or
+    '_part01'... for pages; notes = human-readable warnings (e.g. reduced PNG resolution).
+    """
+    p = merged_params(params)
+    if not p["width"]:
+        p["width"] = 1000
+    n = count_tracks(region, p)
+    per = int(tracks_per_file or 0)
+    pages = [None] if per <= 0 or n <= per else [(i, per) for i in range(math.ceil(n / per))]
+    files, notes = [], []
+    for k, page in enumerate(pages):
+        fig = build_figure(region, p, transcripts, interactive=False, pages=page)
+        s = float(scale or 1) if fmt in ("png", "jpeg", "webp") else 1.0
+        if s > 1:
+            w, h = fig.layout.width, fig.layout.height
+            limit = min(MAX_PNG_SIDE / max(w, h), math.sqrt(MAX_PNG_AREA / (w * h)))
+            if s > limit:
+                s = max(1.0, math.floor(limit * 10) / 10)
+                notes.append(f"resolution reduced to ×{s:g} ({w}×{h} px figure; larger PNGs come out corrupt)")
+        suffix = "" if page is None else f"_part{k + 1:02d}"
+        files.append((suffix, fig.to_image(format=fmt, scale=s)))
+    return files, list(dict.fromkeys(notes))
