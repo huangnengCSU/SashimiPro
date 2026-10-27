@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "SashimiPro"
+version = "0.1.0"
+description = "Interactive sashimi plots in pure Python (pysam + Plotly/Dash)"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = ["pysam>=0.20", "numpy", "pandas", "plotly>=5.22", "dash>=2.16", "kaleido>=0.2"]
+
+[project.scripts]
+sashimi = "sashimi.__main__:main"
+sashimipro = "sashimi.__main__:main"
+
+[tool.setuptools]
+packages = ["sashimi"]
+
+[tool.setuptools.package-data]
+sashimi = ["assets/*.css"]
