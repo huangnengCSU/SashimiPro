@@ -93,17 +93,6 @@ With many samples, add `--tracks-per-file 25` to split the figure into several r
 | `MATE1_SENSE` | Paired-end, read 1 on the transcript strand (Salmon `ISF`, featureCounts `-s 1`) |
 | `MATE2_SENSE` | Paired-end, read 2 on the transcript strand: Illumina TruSeq Stranded / dUTP (Salmon `ISR`, featureCounts `-s 2`) |
 
-## Compared with ggsashimi
-
-| | ggsashimi | SashimiPro |
-|---|---|---|
-| Dependencies | Python + R (ggplot2, data.table, gtable, …) | Python only |
-| Reading BAMs | Per-base Python loop | NumPy difference arrays |
-| Changing a parameter | Re-run the whole script | Instant redraw in the browser |
-| Additional features | — | Gene-name lookup, CPM, read filters, intron highlighting, annotated vs novel junctions, CDS/UTR display, collapsed genes, adjustable shrink strength, hover details |
-
-Notes: as in ggsashimi, only junctions with both ends inside the region are drawn. Arc widths scale with the square root of the read count, relative to the largest junction in the figure.
-
 ## Acknowledgements
 
 SashimiPro is an independent reimplementation inspired by [ggsashimi](https://github.com/guigolab/ggsashimi) (Garrido-Martín et al., *PLoS Comput Biol* 2018), whose sample-sheet format and command-line options it follows.
