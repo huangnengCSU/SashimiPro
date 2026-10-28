@@ -49,7 +49,16 @@ sashimi app -b samples.tsv -g genes.gtf -c chr7:128,938,246-128,942,070 -s MATE2
 - ◀ ▶ move half a window; **zoom out** widens the region 3×; drag a box on the plot and press **zoom in** to reload just that range.
 - Click a junction arc to highlight that intron in every track; click again to remove it.
 
-On a remote server or HPC node, start with `--host 0.0.0.0 --port 8050`, then forward the port locally with `ssh -L 8050:localhost:8050 user@server` and open the same address.
+On a remote server, start the app there with `--port` (default 8050), then forward that port from your own machine and open http://localhost:8050:
+
+```bash
+# on the server
+sashimi app -b samples.tsv -g genes.gtf -c chr7:128,938,246-128,942,070 --port 8050
+# on your own machine
+ssh -N -L 8050:127.0.0.1:8050 user@server
+```
+
+If port 8050 is taken, pick another one and use it in all three places (`--port`, both numbers in `-L`, and the browser address).
 
 ## Sample sheet
 
