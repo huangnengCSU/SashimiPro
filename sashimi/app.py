@@ -20,7 +20,8 @@ from .data import LIBTYPES, ReadFilter, format_region, junction_table, load_regi
 from .plot import DEFAULTS, PALETTES, build_figure, render_files, format_introns, merged_params, parse_introns
 
 # Server-side state (the app is meant to be run locally by one user).
-STATE = {"region": None, "transcripts": None, "annotation": None, "ann_path": None, "cmap": None}
+STATE = {"region": None, "transcripts": None, "annotation": None, "ann_path": None, "cmap": None,
+         "uirev": None, "rev": 0}
 
 
 # --------------------------------------------------------------------------
@@ -283,7 +284,7 @@ def make_layout(init):
             "modeBarButtonsToRemove": ["lasso2d", "select2d"],
         }), type="dot", delay_show=400),
     ])
-    return html.Div([dcc.Store(id="loaded"), html.Div([sidebar, main], className="layout")])
+    return html.Div([dcc.Store(id="loaded"), dcc.Store(id="view"), html.Div([sidebar, main], className="layout")])
 
 
 # --------------------------------------------------------------------------
@@ -408,17 +409,35 @@ def create_app(init=None):
         p = collect_params(values)
         fig, STATE["cmap"] = build_figure(region, p, STATE["transcripts"], return_cmap=True)
         # keep the zoom while tweaking parameters; reset when region or x scaling changes
-        fig.update_layout(uirevision=f"{loaded['region']}|{p['shrink']}|{p['shrink_power']}")
+        uirev = f"{loaded['region']}|{p['shrink']}|{p['shrink_power']}"
+        if uirev != STATE["uirev"]:         # plotly resets the zoom: invalidate the tracked view
+            STATE["uirev"], STATE["rev"] = uirev, STATE["rev"] + 1
+        fig.update_layout(uirevision=uirev)
         return fig
+
+    @app.callback(
+        Output("view", "data"),
+        Input("graph", "relayoutData"),
+        prevent_initial_call=True,
+    )
+    def track_view(relayout):
+        """Remember the current x zoom (real coordinates) so that Figure export can use it.
+        relayoutData only holds the latest event (e.g. a window resize), so keep the last x range."""
+        if not relayout:
+            return no_update
+        if any(re.fullmatch(r"xaxis\d*\.autorange", k) for k in relayout):
+            return None
+        vr = _view_range(relayout)
+        return {"range": vr, "rev": STATE["rev"]} if vr else no_update
 
     @app.callback(
         Output("dl", "data"), Output("export-status", "children"),
         Input("btn-export", "n_clicks"), Input("btn-junc", "n_clicks"), Input("btn-settings", "n_clicks"),
         State("ex-name", "value"), State("ex-format", "value"), State("ex-scale", "value"), State("ex-per-file", "value"),
-        *[State(cid, "value") for _, cid, _ in PARAM_CONTROLS],
+        State("view", "data"), *[State(cid, "value") for _, cid, _ in PARAM_CONTROLS],
         prevent_initial_call=True,
     )
-    def export(_f, _j, _s, name, fmt, scale, per_file, *values):
+    def export(_f, _j, _s, name, fmt, scale, per_file, view, *values):
         name = (name or "sashimi").strip()
         p = collect_params(values)
         region = STATE["region"]
@@ -436,7 +455,9 @@ def create_app(init=None):
                     df["annotated"] = [(a, b) in known for a, b in zip(df["intron_start"], df["intron_end"])]
                 return dcc.send_data_frame(df.to_csv, f"{name}.junctions.tsv", sep="\t", index=False), \
                     f"{len(df)} junction rows exported."
-            files, notes = render_files(region, p, STATE["transcripts"], fmt, scale, per_file)
+            # export what is on screen: the zoomed x range, unless the plot was reset since
+            vr = view["range"] if view and view.get("rev") == STATE["rev"] else None
+            files, notes = render_files(region, p, STATE["transcripts"], fmt, scale, per_file, view=vr)
             note = ("\n⚠ " + "\n⚠ ".join(notes)) if notes else ""
             if len(files) == 1:
                 return dcc.send_bytes(files[0][1], f"{name}.{fmt}"), f"Saved {name}.{fmt}" + note

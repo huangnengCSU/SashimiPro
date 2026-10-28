@@ -444,12 +444,14 @@ def _track_range(t, region, cmap, p, vmax):
     return ymax, max([ymax] + [a["peak"] for a in arcs]) or 1.0, min([0.0] + [a["peak"] for a in arcs])
 
 
-def build_figure(region, params=None, transcripts=None, interactive=True, return_cmap=False, pages=None):
+def build_figure(region, params=None, transcripts=None, interactive=True, return_cmap=False, pages=None,
+                 view=None):
     """region: data.RegionData; transcripts: Annotation.region(...) output or None.
 
     With return_cmap, also returns the CoordMap (display <-> real coordinates).
     pages=(page, tracks_per_page) draws only that page's tracks (0-based page) while keeping
-    x range, arc widths and the shared y scale identical across pages."""
+    x range, arc widths and the shared y scale identical across pages.
+    view=(start, end) in real coordinates limits the x axis (and title) to that part of the region."""
     p = merged_params(params)
     known = annotated_introns(transcripts) if transcripts else None
     tracks = build_tracks(region, p, known)
@@ -581,13 +583,18 @@ def build_figure(region, params=None, transcripts=None, interactive=True, return
                                   opacity=0.08, layer="below", line_width=0)
                              for a, b in parse_introns(p["highlight"]) if max(a, start) <= min(b, end)]
 
-    x0, x1 = float(cmap.fwd(start - 0.5)), float(cmap.fwd(end + 0.5))
+    vs, ve = start, end
+    if view:
+        vs, ve = max(start, int(view[0])), min(end, int(view[1]))
+        if vs >= ve:
+            vs, ve = start, end
+    x0, x1 = float(cmap.fwd(vs - 0.5)), float(cmap.fwd(ve + 0.5))
     xaxis = dict(range=[x0, x1], showgrid=False, ticks="outside", tickfont=font, tickformat=",d")
     if not cmap.identity:
         k = 7
         pos = np.linspace(x0, x1, k + 2)[1:-1]
         real = cmap.inv(pos)
-        step = nice_step(end - start, 40)
+        step = nice_step(ve - vs, 40)
         real = np.unique(np.round(real / step) * step)
         xaxis.update(tickvals=list(cmap.fwd(real)), ticktext=[f"{int(v):,}" for v in real])
     fig.update_xaxes(**xaxis)
@@ -596,7 +603,7 @@ def build_figure(region, params=None, transcripts=None, interactive=True, return
     strand_txt = {"+": "plus strand", "-": "minus strand", "combined": ""}.get(p["strand"], "")
     if region.libtype == "NONE":
         strand_txt = ""
-    title = f"{region.chrom}:{start:,}-{end:,}" + (f" · {strand_txt}" if strand_txt else "") \
+    title = f"{region.chrom}:{vs:,}-{ve:,}" + (f" · {strand_txt}" if strand_txt else "") \
         + (" · CPM" if normalized else "") + (" · introns shrunk" if not cmap.identity else "") + page_note
     fig.update_layout(
         height=plot_h + margin["t"] + margin["b"],
@@ -617,11 +624,12 @@ MAX_PNG_SIDE = 60_000           # Chromium (used by kaleido) cannot rasterise be
 MAX_PNG_AREA = 250_000_000      # ... or ~268M px in total; larger PNGs come out corrupt
 
 
-def render_files(region, params, transcripts, fmt="pdf", scale=2.0, tracks_per_file=0):
+def render_files(region, params, transcripts, fmt="pdf", scale=2.0, tracks_per_file=0, view=None):
     """Render the figure to image bytes, split into several files when there are many tracks.
 
     Returns (files, notes): files = [(suffix, bytes)] with suffix '' for a single file or
     '_part01'... for pages; notes = human-readable warnings (e.g. reduced PNG resolution).
+    view=(start, end) exports only that part of the region (e.g. the current zoom in the app).
     """
     p = merged_params(params)
     if not p["width"]:
@@ -631,7 +639,7 @@ def render_files(region, params, transcripts, fmt="pdf", scale=2.0, tracks_per_f
     pages = [None] if per <= 0 or n <= per else [(i, per) for i in range(math.ceil(n / per))]
     files, notes = [], []
     for k, page in enumerate(pages):
-        fig = build_figure(region, p, transcripts, interactive=False, pages=page)
+        fig = build_figure(region, p, transcripts, interactive=False, pages=page, view=view)
         s = float(scale or 1) if fmt in ("png", "jpeg", "webp") else 1.0
         if s > 1:
             w, h = fig.layout.width, fig.layout.height
