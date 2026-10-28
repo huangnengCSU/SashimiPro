@@ -58,9 +58,16 @@ def read_samples(paths):
     if len(paths) == 1 and not _is_alignment_path(paths[0]):
         sheet = paths[0]
         with open(sheet, encoding="utf-8") as fh:
-            rows = [l.rstrip("\n\r").split("\t") for l in fh if l.strip() and not l.startswith("#")]
-        if not rows:
+            lines = [l.rstrip("\n\r") for l in fh if l.strip() and not l.startswith("#")]
+        if not lines:
             raise ValueError(f"Sample sheet {sheet} is empty")
+        # Tab-separated is canonical; fall back to any whitespace when no tabs.
+        if any("\t" in l for l in lines):
+            rows = [l.split("\t") for l in lines]
+        else:
+            rows = [l.split() for l in lines]
+        if all(len(r) < 2 for r in rows):
+            raise ValueError(f"Sample sheet {sheet} needs at least two columns (id, bam path)")
         if len(rows[0]) > 1 and not _is_alignment_path(rows[0][1]):
             header, rows = rows[0], rows[1:]
         else:
@@ -70,6 +77,9 @@ def read_samples(paths):
         width = len(header)
         rows = [(r + [""] * width)[:width] for r in rows]
         df = pd.DataFrame(rows, columns=header)
+        missing = df.loc[df["bam"].str.strip() == "", "id"].tolist()
+        if missing:
+            raise ValueError(f"Sample sheet {sheet}: no bam path for {missing}")
         base = os.path.dirname(os.path.abspath(sheet))
         df["bam"] = [p if os.path.isabs(p) else os.path.join(base, p) for p in df["bam"]]
     else:
